@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 import sys
 from typing import Dict, Literal, Sequence
-
+import time
 import numpy as np
 import pandas as pd
 
@@ -137,6 +137,7 @@ def score_single_feature(
     prediction_mode: PredictionMode = "leaf_average",
     normalize_action_rows: bool = True,
 ) -> FeatureScore:
+
     aligned_features, aligned_actions = _validate_inputs(features, actions)
     if feature_name not in aligned_features.columns:
         raise KeyError(f"unknown feature column: {feature_name}")
@@ -148,6 +149,7 @@ def score_single_feature(
     else:
         prepared_actions = aligned_actions.astype(np.float64)
         row_weights = pd.Series(1.0, index=prepared_actions.index, dtype=np.float64)
+
     action_matrix = prepared_actions.to_numpy(dtype=np.float64)
     row_weight_array = row_weights.to_numpy(dtype=np.float64)
     feature_mask = aligned_features[feature_name].fillna(0).astype(bool).to_numpy()
@@ -167,6 +169,7 @@ def score_single_feature(
     false_total_mass, false_action_totals, false_action_ratios = _group_action_summary(
         raw_actions.loc[~feature_mask]
     )
+
     if true_count == 0 or false_count == 0:
         constant_prediction = {
             column: float(value)
@@ -241,6 +244,7 @@ def rank_single_features(
     normalize_action_rows: bool = True,
     feature_names: Sequence[str] | None = None,
 ) -> list[FeatureScore]:
+
     aligned_features, aligned_actions = _validate_inputs(features, actions)
     columns = (
         list(feature_names)
@@ -279,6 +283,7 @@ def get_best_single_feature(
     normalize_action_rows: bool = True,
     feature_names: Sequence[str] | None = None,
 ) -> FeatureScore:
+
     scores = rank_single_features(
         features,
         actions,
@@ -287,6 +292,7 @@ def get_best_single_feature(
         normalize_action_rows=normalize_action_rows,
         feature_names=feature_names,
     )
+
     if not scores:
         raise ValueError("no features to score")
     overall_action_ratios = get_overall_action_ratios(actions)
@@ -295,6 +301,7 @@ def get_best_single_feature(
     best_score = scores[0]
     true_ratios_str = {k: f"{v:.2f}" for k, v in best_score.true_prediction.items()}
     false_ratios_str = {k: f"{v:.2f}" for k, v in best_score.false_prediction.items()}
+
     return (
         best_score,
         true_ratios_str,

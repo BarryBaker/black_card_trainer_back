@@ -27,7 +27,7 @@ db = PokiDatabase()
 #         print(i, board, stack, pos, pot, line, file=board_dump_file)
 
 
-board, data, stack, pos, pot, line = db.get_poki_nth_board_and_data(1114)
+board, data, stack, pos, pot, line = db.get_poki_nth_board_and_data(120000)
 
 print()
 
@@ -53,10 +53,7 @@ total_mass = actions.shape[0]
 
 
 def split(features, actions, depth=0):
-    # if depth >= 10:
-    #     print("Max depth reached, stopping split.")
-    #     return
-    # Remove columns that have only True or only False values
+
     features = features.loc[:, (features.nunique() > 1)]
     mass = features.shape[0] / total_mass
     overall_action_ratios = get_overall_action_ratios(actions)
@@ -67,6 +64,7 @@ def split(features, actions, depth=0):
             "actions": overall_action_ratios,
             "split": False,
             "best_feature": None,
+            "cards": actions.shape[0],
         }
     (
         best_score,
@@ -92,28 +90,9 @@ def split(features, actions, depth=0):
             "actions": overall_action_ratios,
             "split": False,
             "best_feature": None,
+            "cards": actions.shape[0],
         }
-    # print(best_score.feature_name, best_true_action, best_false_action)
-    # print(
-    #     {
-    #         "mass": mass,
-    #         "actions": overall_action_ratios,
-    #         "best_feature": best_score.feature_name,
-    #     }
-    # )
-    # print("\n" + "  " * depth + f"Split: {feature_splits} | Depth: {depth}")
-    # print("Mass:", f"{mass:.3f}")
-    # print("Overall action ratios:", overall_action_ratios)
 
-    # print(
-    #     "Best feature:",
-    #     f"\033[91m{best_score.feature_name}\033[0m",
-    # )
-    # print("True  action ratios for best feature:", true_ratios_str)
-    # print("False action ratios for best feature:", false_ratios_str)
-    # print(
-    #     # actions_split,
-    # )
     # Split both dataframes with the same boolean mask from the best feature column.
     best_feature_mask = features[best_score.feature_name].astype(bool)
 
@@ -128,20 +107,9 @@ def split(features, actions, depth=0):
             "actions": overall_action_ratios,
             "split": False,
             "best_feature": None,
+            "cards": actions.shape[0],
         }
 
-    # split(
-    #     features_true,
-    #     actions_true,
-    #     # feature_splits + best_score.feature_name + "_T, ",
-    #     depth=depth + 1,
-    # )
-    # split(
-    #     features_false,
-    #     actions_false,
-    #     # feature_splits + best_score.feature_name + "_F, ",
-    #     depth=depth + 1,
-    # )
     return {
         "mass": mass,
         "actions": overall_action_ratios,
@@ -155,14 +123,15 @@ def split(features, actions, depth=0):
             features_false,
             actions_false,
         ),
+        "cards": actions.shape[0],
     }
 
 
-def find_last_false(subTree):
+def find_last_false_subtree(subTree):
     if subTree["false"]["best_feature"] is None:
 
-        return subTree["false"]["actions"]
-    return find_last_false(subTree["false"])
+        return subTree["false"]
+    return find_last_false_subtree(subTree["false"])
 
 
 def is_tree_splits(subTree):
@@ -181,7 +150,7 @@ tree = split(features, actions)
 time2 = time.time()
 print(f"Tree built in {time2 - time1:.2f} seconds")
 print(tree["actions"])
-# print(tree)
+# pprint(tree)
 
 
 # pprint(tree, sort_dicts=False, width=120)
@@ -195,11 +164,13 @@ def print_tree(subTree, indentation=0):
         action_to_print = max(
             subTree["true"]["actions"], key=subTree["true"]["actions"].get
         )
+        cards = subTree["true"]["actions"]
     else:
         # pprint(subTree["true"])
-        last_false = find_last_false(subTree["true"])
+        last_false = find_last_false_subtree(subTree["true"])
         # print("Last false in true branch:", last_false)
-        action_to_print = max(last_false, key=last_false.get)
+        action_to_print = max(last_false["actions"], key=last_false["actions"].get)
+        cards = last_false["cards"]
 
     print(
         "|    " * indentation
@@ -216,6 +187,7 @@ def print_tree(subTree, indentation=0):
 
 
 print_tree(tree)
-last_false = find_last_false(tree["false"])
-action_to_print = max(last_false, key=last_false.get)
+last_false = find_last_false_subtree(tree["false"])
+action_to_print = max(last_false["actions"], key=last_false["actions"].get)
+cards = last_false["cards"]
 print("rest" + ": " + f"\033[91m{action_to_print}\033[0m")

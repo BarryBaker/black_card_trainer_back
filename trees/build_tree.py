@@ -18,36 +18,15 @@ import numpy as np
 import pandas as pd
 from pprint import pprint
 
-db = PokiDatabase()
+total_mass = 0
+result = []
+
 # BOARD_DUMP_PATH = Path(__file__).resolve().parent / "board_dump.txt"
 
 # with BOARD_DUMP_PATH.open("w", encoding="utf-8") as board_dump_file:
 #     for i in range(1, 3000):
 #         board, data, stack, pos, pot, line = db.get_poki_nth_board_and_data(i)
 #         print(i, board, stack, pos, pot, line, file=board_dump_file)
-
-time1 = time.time()
-board, data, stack, pos, pot, line = db.get_poki_nth_board_and_data(291)
-
-print()
-
-print(
-    "------ Board",
-    board,
-    "| Stack",
-    stack,
-    "| Position",
-    pos,
-    "| Pot",
-    pot,
-    "| Line",
-    line,
-)
-
-features, actions = extract_features(board, data)
-
-
-total_mass = actions.shape[0]
 
 # the_tree = {}
 
@@ -145,18 +124,6 @@ def is_tree_splits(subTree):
     return True
 
 
-tree = split(features, actions)
-
-# print(f"Tree built in {time2 - time1:.2f} seconds")
-print(tree["actions"])
-# pprint(tree)
-
-
-# pprint(tree, sort_dicts=False, width=120)
-
-result = []
-
-
 def build_result(tree):
     def print_tree(subTree, indentation=0):
         if not is_tree_splits(subTree):
@@ -209,13 +176,6 @@ def build_result(tree):
     )
 
 
-build_result(tree)
-time2 = time.time()
-print(f"Result built in {time2 - time1:.2f} seconds")
-for i in result:
-    print(i)
-
-
 def print_whole_tree(tree):
     def print_tree(subTree, indentation=0):
         if not is_tree_splits(subTree):
@@ -265,4 +225,43 @@ def print_whole_tree(tree):
     print(("rest" + ": " + f"\033[91m{action_to_print}\033[0m").ljust(55) + f" {cards}")
 
 
-print_whole_tree(tree)
+def main():
+    global total_mass, result
+
+    db = PokiDatabase()
+    time1 = time.time()
+    board, data, stack, pos, pot, line = db.get_poki_nth_board_and_data(291)
+
+    print()
+    print(
+        "------ Board",
+        board,
+        "| Stack",
+        stack,
+        "| Position",
+        pos,
+        "| Pot",
+        pot,
+        "| Line",
+        line,
+    )
+
+    features, actions = extract_features(board, data)
+    total_mass = actions.shape[0]
+
+    tree = split(features, actions)
+    print(tree["actions"])
+
+    result = []
+    build_result(tree)
+
+    time2 = time.time()
+    print(f"Result built in {time2 - time1:.2f} seconds")
+    for item in result:
+        print(item)
+
+    print_whole_tree(tree)
+
+
+if __name__ == "__main__":
+    main()

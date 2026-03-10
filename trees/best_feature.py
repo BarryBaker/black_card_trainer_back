@@ -284,23 +284,122 @@ def get_best_single_feature(
     feature_names: Sequence[str] | None = None,
 ) -> FeatureScore:
 
-    scores = rank_single_features(
-        features,
-        actions,
-        loss_metric=loss_metric,
-        prediction_mode=prediction_mode,
-        normalize_action_rows=normalize_action_rows,
-        feature_names=feature_names,
+    aligned_features, aligned_actions = _validate_inputs(features, actions)
+    columns = (
+        list(feature_names)
+        if feature_names is not None
+        else list(aligned_features.columns)
+    )
+    if not columns:
+        raise ValueError("no features to score")
+
+    # --- Prepare actions and weights ONCE ---
+    raw_actions = aligned_actions.astype(np.float64).clip(lower=0.0)
+    if normalize_action_rows:
+        prepared_actions, row_weights = normalize_actions(aligned_actions)
+    else:
+        prepared_actions = aligned_actions.astype(np.float64)
+        row_weights = pd.Series(1.0, index=prepared_actions.index, dtype=np.float64)
+
+    A = prepared_actions.to_numpy(dtype=np.float64)  # (N, K)
+    w = row_weights.to_numpy(dtype=np.float64)  # (N,)
+    action_cols = list(prepared_actions.columns)
+
+    # --- Build boolean feature matrix (N, M) ---
+    F = aligned_features[columns].fillna(0).to_numpy(dtype=np.float64)
+    F = (F != 0).astype(np.float64)
+
+    # --- Vectorised weighted-sum-of-squares split search ---
+    wA = A * w[:, None]  # (N, K)
+    wA2 = (A**2) * w[:, None]  # (N, K)
+
+    W = float(w.sum())
+    S = wA.sum(axis=0)  # (K,)
+    Q = wA2.sum(axis=0)  # (K,)
+
+    W_true = F.T @ w  # (M,)
+    S_true = F.T @ wA  # (M, K)
+    Q_true = F.T @ wA2  # (M, K)
+
+    W_false = W - W_true  # (M,)
+    S_false = S[None, :] - S_true  # (M, K)
+    Q_false = Q[None, :] - Q_true  # (M, K)
+
+    # WSS = Q - S^2 / W  (per group, per action column)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        wss_true = Q_true - S_true**2 / np.where(
+            W_true[:, None] > 0, W_true[:, None], 1.0
+        )
+        wss_false = Q_false - S_false**2 / np.where(
+            W_false[:, None] > 0, W_false[:, None], 1.0
+        )
+
+    wss_true = np.where(W_true[:, None] > 0, wss_true, 0.0)
+    wss_false = np.where(W_false[:, None] > 0, wss_false, 0.0)
+
+    split_losses = wss_true.sum(axis=1) + wss_false.sum(axis=1)  # (M,)
+    baseline_loss = float((Q - S**2 / W).sum())
+
+    improvements = baseline_loss - split_losses
+
+    # Degenerate features (all-true or all-false) cannot improve
+    true_counts = F.sum(axis=0).astype(int)
+    N = F.shape[0]
+    degenerate = (true_counts == 0) | (true_counts == N)
+    improvements[degenerate] = -1.0
+
+    best_idx = int(np.argmax(improvements))
+    best_name = columns[best_idx]
+
+    # --- Build detailed result for the winner only ---
+    feature_mask = F[:, best_idx].astype(bool)
+    tc = int(true_counts[best_idx])
+    fc = N - tc
+
+    true_total_mass, true_action_totals, _ = _group_action_summary(
+        raw_actions.loc[feature_mask]
+    )
+    false_total_mass, false_action_totals, _ = _group_action_summary(
+        raw_actions.loc[~feature_mask]
     )
 
-    if not scores:
-        raise ValueError("no features to score")
-    overall_action_ratios = get_overall_action_ratios(actions)
-    overall_action_ratios = {k: f"{v:.2f}" for k, v in overall_action_ratios.items()}
+    if W_true[best_idx] > 0:
+        true_pred = S_true[best_idx] / W_true[best_idx]
+    else:
+        true_pred = A.mean(axis=0)
+    if W_false[best_idx] > 0:
+        false_pred = S_false[best_idx] / W_false[best_idx]
+    else:
+        false_pred = A.mean(axis=0)
 
-    best_score = scores[0]
-    true_ratios_str = {k: f"{v:.2f}" for k, v in best_score.true_prediction.items()}
-    false_ratios_str = {k: f"{v:.2f}" for k, v in best_score.false_prediction.items()}
+    if prediction_mode == "leaf_argmax":
+        tp = np.zeros_like(true_pred)
+        tp[int(true_pred.argmax())] = 1.0
+        true_pred = tp
+        fp = np.zeros_like(false_pred)
+        fp[int(false_pred.argmax())] = 1.0
+        false_pred = fp
+
+    true_prediction = {c: float(v) for c, v in zip(action_cols, true_pred)}
+    false_prediction = {c: float(v) for c, v in zip(action_cols, false_pred)}
+
+    best_score = FeatureScore(
+        feature_name=best_name,
+        loss=float(split_losses[best_idx]),
+        baseline_loss=baseline_loss,
+        improvement=float(improvements[best_idx]),
+        true_count=tc,
+        false_count=fc,
+        true_total_mass=true_total_mass,
+        false_total_mass=false_total_mass,
+        true_action_totals=true_action_totals,
+        false_action_totals=false_action_totals,
+        true_prediction=true_prediction,
+        false_prediction=false_prediction,
+    )
+
+    true_ratios_str = {k: f"{v:.2f}" for k, v in true_prediction.items()}
+    false_ratios_str = {k: f"{v:.2f}" for k, v in false_prediction.items()}
 
     return (
         best_score,

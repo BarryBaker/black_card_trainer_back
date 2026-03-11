@@ -5,6 +5,11 @@ from pathlib import Path
 
 import numpy as np
 
+"""
+python -m pytest -v
+
+"""
+
 # Allow running this file directly: `python tests/test_feature_ops.py`.
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -363,12 +368,13 @@ def test_two_pair_unpaired_board():
         "AhKdQsQd": {},  # A and K → two_pair and top_two_pair
         "Ah7dQsQd": {},  # A and 7 → two_pair only
         "QhQcJhJd": {},  # none → no two_pair
+        "QhTs7s7h": [],  # pair of 7s but only one 7 on board → no two_pair
     }
     ranks, _ = encode_hands(hands)
     counts = compute_counts_by_rank(ranks)
     tp, ttp = feature_two_pair(counts, board)
-    assert tp.tolist() == [1, 1, 0]
-    assert ttp.tolist() == [1, 0, 0]
+    assert tp.tolist() == [1, 1, 0, 0]
+    assert ttp.tolist() == [1, 0, 0, 0]
 
 
 def test_two_pair_single_paired_board():

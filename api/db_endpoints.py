@@ -31,6 +31,17 @@ def get_required_payload_fields(payload, required_fields):
     return missing_fields
 
 
+def get_street_filter_condition(street):
+    """Convert street value to SQL condition for is_flop/is_turn columns"""
+    street_lower = street.lower() if isinstance(street, str) else str(street).lower()
+    if street_lower == "flop":
+        return "is_flop", True
+    elif street_lower == "turn":
+        return "is_turn", True
+    else:
+        raise ValueError(f"Invalid street value: {street}. Must be 'flop' or 'turn'")
+
+
 def normalize_json_value(value):
     if isinstance(value, Decimal):
         return float(value)
@@ -118,10 +129,14 @@ def db_healthcheck():
 
 @db_blueprint.post("/lines")
 def get_unique_lines_for_filters():
+
     payload = request.get_json(silent=True) or {}
-    required_fields = ("stack", "pos", "pot", "hero")
+
+    required_fields = ("stack", "pos", "pot", "hero", "street")
     missing_fields = get_required_payload_fields(payload, required_fields)
+
     if missing_fields:
+
         return (
             jsonify(
                 {
@@ -136,16 +151,19 @@ def get_unique_lines_for_filters():
     database = get_database()
 
     try:
+        street_column, street_value = get_street_filter_condition(payload["street"])
+
         with database.get_connection() as connection:
             with connection.cursor() as cursor:
                 query = sql.SQL(
-                    "select distinct line from public.poki where stack = %s and pos = %s and pot = %s and hero = %s and line is not null order by line"
-                )
+                    "select distinct line from public.poki where stack = %s and pos = %s and pot = %s and hero = %s and {} = %s and line is not null order by line"
+                ).format(sql.Identifier(street_column))
                 params = [
                     payload["stack"],
                     payload["pos"],
                     payload["pot"],
                     payload["hero"],
+                    street_value,
                 ]
 
                 cursor.execute(query, params)
@@ -173,7 +191,7 @@ def get_unique_lines_for_filters():
 @db_blueprint.post("/train")
 def get_weighted_training_record():
     payload = request.get_json(silent=True) or {}
-    required_fields = ("stack", "pos", "pot", "hero", "line")
+    required_fields = ("stack", "pos", "pot", "hero", "line", "street")
     missing_fields = get_required_payload_fields(payload, required_fields)
     if missing_fields:
         return (
@@ -202,6 +220,8 @@ def get_weighted_training_record():
     database = get_database()
 
     try:
+        street_column, street_value = get_street_filter_condition(payload["street"])
+
         with database.get_connection() as connection:
             with connection.cursor(cursor_factory=RealDictCursor) as cursor:
                 query = sql.SQL(
@@ -212,18 +232,20 @@ def get_weighted_training_record():
                       and pos = %s
                       and pot = %s
                       and hero = %s
+                      and {} = %s
                       and line = any(%s)
                       and total_weight is not null
                       and total_weight > 0
                     order by -ln(random()) / total_weight
                     limit 1
                     """
-                )
+                ).format(sql.Identifier(street_column))
                 params = [
                     payload["stack"],
                     payload["pos"],
                     payload["pot"],
                     payload["hero"],
+                    street_value,
                     requested_lines,
                 ]
 
@@ -264,11 +286,19 @@ def get_weighted_training_record():
             ),
             404,
         )
-
+    print("Selected task:", normalize_json_value(task))
     return jsonify(
         {
             "id": record["id"],
             "board": record["board"],
+            "stack": record["stack"],
+            "pos": record["pos"],
+            "pot": record["pot"],
+            "street": (
+                "flop"
+                if record["is_flop"]
+                else "turn" if record["is_turn"] else "unknown"
+            ),
             "line": record["line"],
             "hero": record["hero"],
             "task": normalize_json_value(task),
@@ -279,7 +309,7 @@ def get_weighted_training_record():
 @db_blueprint.post("/tree")
 def get_tree():
     payload = request.get_json(silent=True) or {}
-    required_fields = ("id",)
+    required_fields = ("id", "taskhand")
     missing_fields = get_required_payload_fields(payload, required_fields)
     if missing_fields:
         return (
@@ -307,13 +337,19 @@ def get_tree():
         mass = features.shape[0] / total_mass
         overall_action_ratios = get_overall_action_ratios(actions)
         if features.empty:
-            # print("Features dataframe is empty, stopping split.")
+
+            try:
+                taskhandhasit = features.loc[payload["taskhand"], :]
+            except KeyError:
+                taskhandhasit = None
+
             return {
                 "mass": mass,
                 "actions": overall_action_ratios,
                 "split": False,
                 "best_feature": None,
                 "cards": actions,
+                "taskhand": taskhandhasit is not None,
             }
         (
             best_score,
@@ -333,18 +369,29 @@ def get_tree():
         )
 
         if mass < 0.05 and not actions_split:
-            # print("Mass below threshold, stopping split.")
+            try:
+                taskhandhasit = features.loc[payload["taskhand"], :]
+
+            except KeyError:
+                taskhandhasit = None
+
             return {
                 "mass": mass,
                 "actions": overall_action_ratios,
                 "split": False,
                 "best_feature": None,
                 "cards": actions,
+                "taskhand": taskhandhasit is not None,
             }
 
         # Split both dataframes with the same boolean mask from the best feature column.
         best_feature_mask = features[best_score.feature_name].astype(bool)
 
+        try:
+            taskhandhasit = features.loc[payload["taskhand"], :]
+        except KeyError:
+            taskhandhasit = None
+        # print("taskhand else", taskhandhasit)
         features_true = features.loc[best_feature_mask].copy()
         features_false = features.loc[~best_feature_mask].copy()
 
@@ -357,6 +404,7 @@ def get_tree():
                 "split": False,
                 "best_feature": None,
                 "cards": actions,
+                "taskhand": taskhandhasit is not None,
             }
 
         return {
@@ -373,6 +421,7 @@ def get_tree():
                 actions_false,
             ),
             "cards": actions,
+            "taskhand": taskhandhasit is not None,
         }
 
     def find_last_false_subtree(subTree):
@@ -396,58 +445,67 @@ def get_tree():
     overall_actions = tree["actions"]
     result = []
 
-    def build_result(tree):
-        def print_tree(subTree, indentation=0):
-            if not is_tree_splits(subTree):
-                return
-            true_not_splits = subTree["true"]["best_feature"] is None
-            if true_not_splits:
-                action_to_print = subTree["true"]["actions"]
+    def build_result(subTree, indentation=0):
 
-                cards = (
-                    subTree["true"]["cards"]
-                    .sample(n=min(7, len(subTree["true"]["cards"])))
-                    .to_dict("index")
-                )
-            else:
-                last_false = find_last_false_subtree(subTree["true"])
-                action_to_print = last_false["actions"]
-                cards = (
-                    last_false["cards"]
-                    .sample(n=min(7, len(last_false["cards"])))
-                    .to_dict("index")
-                )
+        if not is_tree_splits(subTree):
+            return
+        true_splits = is_tree_splits(subTree["true"])
+        false_splits = is_tree_splits(subTree["false"])
+        taskhand = ""
+        cards = []
 
+        if true_splits:
+            action_to_print = subTree["true"]["actions"]
+        else:
+            action_to_print = subTree["true"]["actions"]
+            cards = subTree["true"]["cards"].index.tolist()
+            taskhand = subTree["true"]["taskhand"]
+        # print(
+        #     {
+        #         "indentation": indentation,
+        #         "best_feature": subTree["best_feature"],
+        #         "action": action_to_print,
+        #         "cards": cards[:1],
+        #         "taskhand": taskhand,
+        #     }
+        # )
+        result.append(
+            {
+                "indentation": indentation,
+                "best_feature": subTree["best_feature"],
+                "action": action_to_print,
+                "cards": cards,
+                "taskhand": taskhand,
+            }
+        )
+
+        if subTree["true"]["best_feature"] is not None:
+            build_result(subTree["true"], indentation + 1)
+        if not false_splits:
+            action_to_print = subTree["false"]["actions"]
+            taskhand = subTree["false"]["taskhand"]
+            cards = subTree["false"]["cards"].index.tolist()
+            # print(
+            #     {
+            #         "indentation": indentation,
+            #         "best_feature": "rest",
+            #         "action": action_to_print,
+            #         "cards": cards[:1],
+            #         "taskhand": taskhand,
+            #     }
+            # )
             result.append(
                 {
                     "indentation": indentation,
-                    "best_feature": subTree["best_feature"],
+                    "best_feature": "rest",
                     "action": action_to_print,
                     "cards": cards,
+                    "taskhand": taskhand,
                 }
             )
 
-            if subTree["true"]["best_feature"] is not None:
-                print_tree(subTree["true"], indentation + 1)
-            if subTree["false"]["best_feature"] is not None:
-                print_tree(subTree["false"], indentation)
-
-        print_tree(tree)
-        last_false = find_last_false_subtree(tree["false"])
-        action_to_print = last_false["actions"]
-        cards = (
-            last_false["cards"]
-            .sample(n=min(7, len(last_false["cards"])))
-            .to_dict("index")
-        )
-        result.append(
-            {
-                "indentation": 0,
-                "best_feature": "rest",
-                "action": action_to_print,
-                "cards": cards,
-            }
-        )
+        if subTree["false"]["best_feature"] is not None:
+            build_result(subTree["false"], indentation)
 
     build_result(tree)
 

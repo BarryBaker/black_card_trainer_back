@@ -11,7 +11,11 @@ from features.board import Board
 from features.encoding import encode_hands
 from features.extractor import extract_features
 from trees import best_feature
-from trees.best_feature import get_best_single_feature, get_overall_action_ratios
+from trees.best_feature import (
+    get_best_single_feature,
+    get_overall_action_ratios,
+    rank_single_features,
+)
 from typing import Dict, Iterable, List, Optional, Sequence, Mapping, Any, Tuple
 
 import numpy as np
@@ -175,151 +179,122 @@ def is_tree_splits(subTree):
     return True
 
 
-def build_result(tree):
-    def print_tree(subTree, indentation=0):
-        if not is_tree_splits(subTree):
-            return
-        true_not_splits = subTree["true"]["best_feature"] is None
-        if true_not_splits:
-            action_to_print = subTree["true"]["actions"]
+# def build_result(tree):
+#     def print_tree(subTree, indentation=0):
+#         if not is_tree_splits(subTree):
+#             return
+#         true_not_splits = subTree["true"]["best_feature"] is None
+#         if true_not_splits:
+#             action_to_print = subTree["true"]["actions"]
 
-            cards = (
-                subTree["true"]["cards"]
-                .sample(n=min(7, len(subTree["true"]["cards"])))
-                .to_dict("index")
-            )
-            taskhand = subTree["true"]["taskhand"]
-        else:
-            last_false = find_last_false_subtree(subTree["true"])
-            action_to_print = last_false["actions"]
-            cards = (
-                last_false["cards"]
-                .sample(n=min(7, len(last_false["cards"])))
-                .to_dict("index")
-            )
-            taskhand = last_false["taskhand"]
-        result.append(
-            {
-                "indentation": indentation,
-                "best_feature": subTree["best_feature"],
-                "action": action_to_print,
-                "cards": cards,
-                "taskhand": taskhand,
-            }
-        )
+#             cards = (
+#                 subTree["true"]["cards"]
+#                 .sample(n=min(7, len(subTree["true"]["cards"])))
+#                 .to_dict("index")
+#             )
+#             taskhand = subTree["true"]["taskhand"]
+#         else:
+#             last_false = find_last_false_subtree(subTree["true"])
+#             action_to_print = last_false["actions"]
+#             cards = (
+#                 last_false["cards"]
+#                 .sample(n=min(7, len(last_false["cards"])))
+#                 .to_dict("index")
+#             )
+#             taskhand = last_false["taskhand"]
+#         result.append(
+#             {
+#                 "indentation": indentation,
+#                 "best_feature": subTree["best_feature"],
+#                 "action": action_to_print,
+#                 "cards": cards,
+#                 "taskhand": taskhand,
+#             }
+#         )
 
-        if subTree["true"]["best_feature"] is not None:
-            print_tree(subTree["true"], indentation + 1)
-        if subTree["false"]["best_feature"] is not None:
-            print_tree(subTree["false"], indentation)
+#         if subTree["true"]["best_feature"] is not None:
+#             print_tree(subTree["true"], indentation + 1)
+#         if subTree["false"]["best_feature"] is not None:
+#             print_tree(subTree["false"], indentation)
 
-    print_tree(tree)
-    last_false = find_last_false_subtree(tree["false"])
-    action_to_print = last_false["actions"]
-    cards = (
-        last_false["cards"].sample(n=min(7, len(last_false["cards"]))).to_dict("index")
-    )
-    result.append(
+#     print_tree(tree)
+#     last_false = find_last_false_subtree(tree["false"])
+#     action_to_print = last_false["actions"]
+#     cards = (
+#         last_false["cards"].sample(n=min(7, len(last_false["cards"]))).to_dict("index")
+#     )
+#     result.append(
+#         {
+#             "indentation": 0,
+#             "best_feature": "rest",
+#             "action": action_to_print,
+#             "cards": cards,
+#             "taskhand": last_false["taskhand"],
+#         }
+#     )
+
+
+def build_result(subTree):
+
+    subresult = []
+    if not is_tree_splits(subTree):
+        return []
+    true_splits = is_tree_splits(subTree["true"])
+    false_splits = is_tree_splits(subTree["false"])
+
+    subresult.append(
         {
-            "indentation": 0,
-            "best_feature": "rest",
-            "action": action_to_print,
-            "cards": cards,
-            "taskhand": last_false["taskhand"],
+            "action": subTree["true"]["actions"],
+            "cards": (
+                (subTree["true"]["cards"].head(3).index.tolist())
+                if not true_splits
+                else []
+            ),
+            "taskhand": subTree["true"]["taskhand"] if not true_splits else "",
+            "best_feature": subTree["best_feature"],
+            "mass": subTree["true"]["mass"],
+            "subtree": (
+                build_result(subTree["true"])
+                if subTree["true"]["best_feature"] is not None
+                else []
+            ),
         }
     )
 
-
-def print_whole_tree(subTree, indentation=0):
-
-    if not is_tree_splits(subTree):
-        return
-    true_splits = is_tree_splits(subTree["true"])
-    false_splits = is_tree_splits(subTree["false"])
-    tasnkhand = ""
-    cards = []
-    # print(subTree["true"]["taskhand"])
-    if true_splits:
-        action_to_print = max(subTree["actions"], key=subTree["actions"].get)
-    else:
-        action_to_print = max(
-            subTree["true"]["actions"], key=subTree["true"]["actions"].get
-        )
-        cards = (
-            subTree["true"]["cards"]
-            .sample(n=min(7, len(subTree["true"]["cards"])))
-            .index.tolist()
-        )
-        tasnkhand = subTree["true"]["taskhand"]
-    # if not false_splits:
-    # action_to_print = max(
-    #     subTree["false"]["actions"], key=subTree["false"]["actions"].get
-    # )
-    # tasnkhand = subTree["false"]["taskhand"]
-    # cards = (
-    #     subTree["false"]["cards"]
-    #     .sample(n=min(7, len(subTree["false"]["cards"])))
-    #     .index.tolist()
-    # )
-    # print(
-    #     (
-    #         "|    " * indentation
-    #         + "rest"
-    #         + ": "
-    #         + f"\033[91m{action_to_print}\033[0m"
-    #         + f"{tasnkhand}"
-    #     ).ljust(55)
-    #     + f" {cards}"
-    # )
-    # else:
-
-    # pprint(subTree["true"])
-    # last_false = find_last_false_subtree(subTree["true"])
-    # print("Last false in true branch:", last_false)
-    # action_to_print = max(last_false["actions"], key=last_false["actions"].get)
-
-    # cards = (
-    #     last_false["cards"]
-    #     .sample(n=min(7, len(last_false["cards"])))
-    #     .index.tolist()
-    # )
-    # tasnkhand = last_false["taskhand"]
-
-    print(
-        (
-            "|    " * indentation
-            + subTree["best_feature"]
-            + ": "
-            + f"\033[91m{action_to_print}\033[0m"
-            + f"{tasnkhand}"
-        ).ljust(55)
-        + f" {cards}"
-    )
-    if subTree["true"]["best_feature"] is not None:
-        print_whole_tree(subTree["true"], indentation + 1)
     if not false_splits:
-        action_to_print = max(
-            subTree["false"]["actions"], key=subTree["false"]["actions"].get
-        )
-        tasnkhand = subTree["false"]["taskhand"]
-        cards = (
-            subTree["false"]["cards"]
-            .sample(n=min(7, len(subTree["false"]["cards"])))
-            .index.tolist()
-        )
-        print(
-            (
-                "|    " * indentation
-                + "rest"
-                + ": "
-                + f"\033[91m{action_to_print}\033[0m"
-                + f"{tasnkhand}"
-            ).ljust(55)
-            + f" {cards}"
+
+        subresult.append(
+            {
+                "action": subTree["false"]["actions"],
+                "cards": (subTree["false"]["cards"].head(3).index.tolist()),
+                "taskhand": subTree["false"]["taskhand"],
+                "best_feature": "rest",
+                "mass": subTree["false"]["mass"],
+                "subtree": [],
+            }
         )
 
     if subTree["false"]["best_feature"] is not None:
-        print_whole_tree(subTree["false"], indentation)
+        subresult = subresult + build_result(subTree["false"])
+        # subresult.append(
+        #     {
+        #         "action": subTree["false"]["actions"],
+        #         "cards": (
+        #             subTree["false"]["cards"]
+        #             .sample(n=min(7, len(subTree["false"]["cards"])))
+        #             .index.tolist()
+        #         ),
+        #         "taskhand": subTree["false"]["taskhand"],
+        #         "best_feature": subTree["false"]["best_feature"],
+        #         "mass": subTree["false"]["mass"],
+        #         "subtree": (
+        #             build_result(subTree["false"])
+        #             if subTree["false"]["best_feature"] is not None
+        #             else []
+        #         ),
+        #     }
+        # )
+    return subresult
 
 
 # last_false = find_last_false_subtree(tree["false"])
@@ -335,7 +310,7 @@ def print_whole_tree(subTree, indentation=0):
 
 
 def main():
-    global total_mass, result
+    global total_mass
 
     db = PokiDatabase()
     time1 = time.time()
@@ -362,15 +337,15 @@ def main():
     tree = split(features, actions)
     print(tree["actions"])
     # pprint(tree)
-    result = []
-    build_result(tree)
+
+    # build_result(tree)
 
     time2 = time.time()
     print(f"Result built in {time2 - time1:.2f} seconds")
-    # for item in result:
-    #     print(item)
-
-    print_whole_tree(tree)
+    result = build_result(tree)
+    for item in result:
+        print(item)
+        print()
 
 
 if __name__ == "__main__":

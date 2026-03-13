@@ -8,7 +8,11 @@ from psycopg2.extras import RealDictCursor
 from psycopg2 import sql
 from db import PokiDatabase
 from features.extractor import extract_features
-from trees.best_feature import get_best_single_feature, get_overall_action_ratios
+from trees.best_feature import (
+    get_best_single_feature,
+    get_overall_action_ratios,
+    rank_single_features,
+)
 
 db_blueprint = Blueprint("db", __name__)
 
@@ -328,6 +332,9 @@ def get_tree():
     db = PokiDatabase()
     board, data, stack, pos, pot, line = db.get_poki_nth_board_and_data(payload["id"])
     features, actions = extract_features(board, data)
+    # scores = rank_single_features(features, actions)
+    # for i in scores[:4]:
+    #     print(i.feature_name, i.loss)
 
     total_mass = actions.shape[0]
 
@@ -443,70 +450,48 @@ def get_tree():
     tree = split(features, actions)
 
     overall_actions = tree["actions"]
-    result = []
 
-    def build_result(subTree, indentation=0):
-
+    def build_result(subTree):
+        subresult = []
         if not is_tree_splits(subTree):
-            return
+            return []
         true_splits = is_tree_splits(subTree["true"])
         false_splits = is_tree_splits(subTree["false"])
-        taskhand = ""
-        cards = []
-
-        if true_splits:
-            action_to_print = subTree["true"]["actions"]
-        else:
-            action_to_print = subTree["true"]["actions"]
-            cards = subTree["true"]["cards"].index.tolist()
-            taskhand = subTree["true"]["taskhand"]
-        # print(
-        #     {
-        #         "indentation": indentation,
-        #         "best_feature": subTree["best_feature"],
-        #         "action": action_to_print,
-        #         "cards": cards[:1],
-        #         "taskhand": taskhand,
-        #     }
-        # )
-        result.append(
+        subresult.append(
             {
-                "indentation": indentation,
+                "action": subTree["true"]["actions"],
+                "cards": (
+                    (subTree["true"]["cards"].index.tolist()) if not true_splits else []
+                ),
+                "taskhand": subTree["true"]["taskhand"] if not true_splits else "",
                 "best_feature": subTree["best_feature"],
-                "action": action_to_print,
-                "cards": cards,
-                "taskhand": taskhand,
+                "mass": subTree["true"]["mass"],
+                "show": False,
+                "subtree": (
+                    build_result(subTree["true"])
+                    if subTree["true"]["best_feature"] is not None
+                    else []
+                ),
             }
         )
 
-        if subTree["true"]["best_feature"] is not None:
-            build_result(subTree["true"], indentation + 1)
         if not false_splits:
-            action_to_print = subTree["false"]["actions"]
-            taskhand = subTree["false"]["taskhand"]
-            cards = subTree["false"]["cards"].index.tolist()
-            # print(
-            #     {
-            #         "indentation": indentation,
-            #         "best_feature": "rest",
-            #         "action": action_to_print,
-            #         "cards": cards[:1],
-            #         "taskhand": taskhand,
-            #     }
-            # )
-            result.append(
+            subresult.append(
                 {
-                    "indentation": indentation,
-                    "best_feature": "rest",
-                    "action": action_to_print,
-                    "cards": cards,
-                    "taskhand": taskhand,
+                    "action": subTree["false"]["actions"],
+                    "cards": (subTree["false"]["cards"].index.tolist()),
+                    "taskhand": subTree["false"]["taskhand"],
+                    "best_feature": "",
+                    "mass": subTree["false"]["mass"],
+                    "show": False,
+                    "subtree": [],
                 }
             )
 
         if subTree["false"]["best_feature"] is not None:
-            build_result(subTree["false"], indentation)
+            subresult = subresult + build_result(subTree["false"])
+        return subresult
 
-    build_result(tree)
+    result = build_result(tree)
 
     return jsonify({"overall_actions": overall_actions, "tree": result})

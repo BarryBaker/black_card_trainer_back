@@ -66,34 +66,34 @@ def extract_features(
 
     feats: Dict[str, np.ndarray] = {}
 
-    feats["quads"] = feature_quads(counts_by_rank, board)
+    feats["Quads"] = feature_quads(counts_by_rank, board)
     fh_mask, fh_best = feature_full_house(counts_by_rank, board)
-    feats["full_house"] = fh_mask
-    feats["full_house_1"] = fh_best
+    feats["Full"] = fh_mask
+    feats["Nut Full"] = fh_best
     trips_mask, trips1_mask, trips_top_mask = feature_trips(counts_by_rank, board)
-    feats["trips"] = trips_mask
-    feats["trips_1"] = trips1_mask
-    feats["trips_top"] = trips_top_mask
+    feats["Trips"] = trips_mask
+    feats["Nut Trips"] = trips1_mask
+    feats["Top Trips"] = trips_top_mask
     two_pair_mask, top_two_pair_mask = feature_two_pair(counts_by_rank, board)
-    feats["two_pair"] = two_pair_mask
-    feats["top_two_pair"] = top_two_pair_mask
+    feats["Two Pair"] = two_pair_mask
+    feats["Top Two Pair"] = top_two_pair_mask
     board_rank_counts = np.bincount(board_ranks, minlength=15)
-    feats["overpair"] = feature_overpair(counts_by_rank, board_rank_counts)
+    feats["Overpair"] = feature_overpair(counts_by_rank, board_rank_counts)
     board_pair_mask, mid_pair_mask, low_pair_mask = feature_board_pair(
         counts_by_rank, board
     )
-    feats["board_pair"] = board_pair_mask
-    feats["mid_pair"] = mid_pair_mask
-    feats["low_pair"] = low_pair_mask
+    feats["Board Pair"] = board_pair_mask
+    feats["Mid Pair"] = mid_pair_mask
+    feats["Low Pair"] = low_pair_mask
 
     # Flush features
     flush_mask_ord = feature_flush_strength(ranks, suits, board)
-    feats["flush"] = (flush_mask_ord > 0).astype(np.int8)
-    feats["flush_1"] = (flush_mask_ord == 1).astype(np.int8)
-    feats["flush_2"] = (flush_mask_ord == 2).astype(np.int8)
+    feats["Flush"] = (flush_mask_ord > 0).astype(np.int8)
+    feats["Nut Flush"] = (flush_mask_ord == 1).astype(np.int8)
+    feats["2nd Nut Flush"] = (flush_mask_ord == 2).astype(np.int8)
     # Top pair features
     top_pair_mask, highest_not_on_board = feature_top_pair(counts_by_rank, board)
-    feats["top_pair"] = top_pair_mask
+    feats["Top Pair"] = top_pair_mask
     # Top kicker for top pair: must both have top pair and also hold the highest rank not on board
     board_present = board.rank_counts[2:15] > 0
     all_ranks = np.arange(2, 15, dtype=np.int8)
@@ -105,44 +105,44 @@ def extract_features(
     has_best_kicker = (highest_not_on_board == highest_not_on_board_value).astype(
         np.int8
     )
-    feats["tptk"] = (top_pair_mask & has_best_kicker).astype(np.int8)
+    feats["Top Pair TK"] = (top_pair_mask & has_best_kicker).astype(np.int8)
 
     # Flush draws
     fdraw_mask_ord = feature_flush_draw_strength(ranks, suits, board)
-    feats["flushdraw"] = (fdraw_mask_ord > 0).astype(np.int8)
-    feats["flushdraw_1"] = (fdraw_mask_ord == 1).astype(np.int8)
-    feats["flushdraw_2"] = (fdraw_mask_ord == 2).astype(np.int8)
+    feats["Flushdraw"] = (fdraw_mask_ord > 0).astype(np.int8)
+    feats["Nut Flushdraw"] = (fdraw_mask_ord == 1).astype(np.int8)
+    feats["Nut Flushdraw"] = (fdraw_mask_ord == 2).astype(np.int8)
     bdfd, double_bdfd = feature_backdoor_flushdraw(suits, board)
-    feats["bdfd"] = bdfd
-    feats["d_bdfd"] = double_bdfd
+    feats["Backdoor FD"] = bdfd
+    feats["D Backdoor FD"] = double_bdfd
     # Flush blockers
     blk, blk1, blkh = feature_flush_blocker(ranks, suits, board)
-    feats["flushblocker"] = blk
-    feats["flushblocker_1"] = blk1
-    feats["flushblocker_high"] = blkh
-    feats["rr"] = feature_rr(counts_by_rank, board)
-    feats["drr"] = feature_drr(counts_by_rank, board)
+    feats["Flushblocker"] = blk
+    feats["Nut Flushblocker"] = blk1
+    feats["High Flushblocker"] = blkh
+    feats["RR"] = feature_rr(counts_by_rank, board)
+    feats["D RR"] = feature_drr(counts_by_rank, board)
 
     # Double flush draw (turn only)
-    feats["double_flush_draw"] = feature_double_flush_draw(suits, board)
+    feats["D Flushdraw"] = feature_double_flush_draw(suits, board)
 
     # Precompute straight helper once; reuse for straight, nut_straight, and draws
     (made_high, hand_sum_used) = straight_helper(counts_by_rank, board_ranks)
     # feats["straight_made_high"] = made_high
     # feats["straight_hand_sum_used"] = hand_sum_used
-    feats["straight"] = (made_high >= 1).astype(np.int8)
-    feats["nut_straight"] = (made_high == 1).astype(np.int8)
+    feats["Straight"] = (made_high >= 1).astype(np.int8)
+    feats["Nut Straight"] = (made_high == 1).astype(np.int8)
 
     outs_count, draw_made_high = feature_straight_draw(
         counts_by_rank, board_ranks, made_high, hand_sum_used
     )
     # Straight draw feature definitions
-    feats["gutshot"] = (outs_count == 1).astype(np.int8)
-    feats["gutshot_1"] = ((outs_count == 1) & (draw_made_high == 1)).astype(np.int8)
-    feats["oesd"] = (outs_count == 2).astype(np.int8)
-    feats["oesd_1"] = ((outs_count == 2) & (draw_made_high == 1)).astype(np.int8)
-    feats["wrap"] = (outs_count > 2).astype(np.int8)
-    feats["wrap_1"] = ((outs_count > 2) & (draw_made_high == 1)).astype(np.int8)
+    feats["Gutshot"] = (outs_count == 1).astype(np.int8)
+    feats["Nut Gutshot"] = ((outs_count == 1) & (draw_made_high == 1)).astype(np.int8)
+    feats["Oesd"] = (outs_count == 2).astype(np.int8)
+    feats["Nut Oesd"] = ((outs_count == 2) & (draw_made_high == 1)).astype(np.int8)
+    feats["Wrap"] = (outs_count > 2).astype(np.int8)
+    feats["Nut Wrap"] = ((outs_count > 2) & (draw_made_high == 1)).astype(np.int8)
 
     # Rank-based features
     rank_chars = ["2", "3", "4", "5", "6", "7", "8", "9", "T", "J", "Q", "K", "A"]

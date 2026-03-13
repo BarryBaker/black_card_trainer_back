@@ -62,7 +62,7 @@ def split(features, actions, depth=0):
         best_score,
         true_ratios_str,
         false_ratios_str,
-    ) = get_best_single_feature(features, actions)
+    ) = get_best_single_feature(features, actions, first=depth)
     mass = features.shape[0] / total_mass
 
     best_overall_action = max(overall_action_ratios, key=overall_action_ratios.get)
@@ -334,7 +334,7 @@ def main():
 
     total_mass = actions.shape[0]
 
-    tree = split(features, actions)
+    tree = split(features, actions, 1)
     print(tree["actions"])
     # pprint(tree)
 
@@ -343,9 +343,9 @@ def main():
     time2 = time.time()
     print(f"Result built in {time2 - time1:.2f} seconds")
     result = build_result(tree)
-    for item in result:
-        print(item)
-        print()
+    # for item in result:
+    #     print(item)
+    #     print()
 
 
 if __name__ == "__main__":

@@ -72,8 +72,8 @@ def extract_features(
     feats["Nut Full"] = fh_best
     trips_mask, trips1_mask, trips_top_mask = feature_trips(counts_by_rank, board)
     feats["Trips"] = trips_mask
-    feats["Nut Trips"] = trips1_mask
-    feats["Top Trips"] = trips_top_mask
+    feats["Trips 1"] = trips1_mask
+    feats["Trips High"] = trips_top_mask
     two_pair_mask, top_two_pair_mask = feature_two_pair(counts_by_rank, board)
     feats["Two Pair"] = two_pair_mask
     feats["Top Two Pair"] = top_two_pair_mask
@@ -120,8 +120,8 @@ def extract_features(
     feats["Flushblocker"] = blk
     feats["Nut Flushblocker"] = blk1
     feats["High Flushblocker"] = blkh
-    feats["RR"] = feature_rr(counts_by_rank, board)
-    feats["D RR"] = feature_drr(counts_by_rank, board)
+    feats["Pocket Pair"] = feature_rr(counts_by_rank, board)
+    feats["D Pocket"] = feature_drr(counts_by_rank, board)
 
     # Double flush draw (turn only)
     feats["D Flushdraw"] = feature_double_flush_draw(suits, board)
@@ -136,6 +136,8 @@ def extract_features(
     outs_count, draw_made_high = feature_straight_draw(
         counts_by_rank, board_ranks, made_high, hand_sum_used
     )
+    print("Outs count:", made_high)
+    print("Draw made high card:", hand_sum_used)
     # Straight draw feature definitions
     feats["Gutshot"] = (outs_count == 1).astype(np.int8)
     feats["Nut Gutshot"] = ((outs_count == 1) & (draw_made_high == 1)).astype(np.int8)
@@ -143,14 +145,102 @@ def extract_features(
     feats["Nut Oesd"] = ((outs_count == 2) & (draw_made_high == 1)).astype(np.int8)
     feats["Wrap"] = (outs_count > 2).astype(np.int8)
     feats["Nut Wrap"] = ((outs_count > 2) & (draw_made_high == 1)).astype(np.int8)
+    feats["Straight draw"] = (feats["Gutshot"] | feats["Oesd"] | feats["Wrap"]).astype(
+        np.int8
+    )
 
-    # Rank-based features
-    rank_chars = ["2", "3", "4", "5", "6", "7", "8", "9", "T", "J", "Q", "K", "A"]
+    def top_two_ranks_from_mask(mask: np.ndarray) -> np.ndarray:
+        if not mask.any():
+            return np.empty(0, dtype=np.int16)
+        subset = ranks[mask]
+        flat = subset.ravel()
+        counts = np.bincount(flat, minlength=15)
+        counts[:2] = 0  # ignore 0/1
+        nonzero = np.flatnonzero(counts)
+        if nonzero.size == 0:
+            return np.empty(0, dtype=np.int16)
+        order = np.argsort(counts[nonzero])  # ascending
+        top_k = nonzero[order][-2:]
+        # Filter ranks with positive counts only
+        top_k = top_k[counts[top_k] > 0]
+        return top_k.astype(np.int16)
+
+    oesd1_mask = feats["Nut Oesd"].astype(bool)
+    nut_mask = feats["Nut Straight"].astype(bool)
+    sdbl_ranks_oesd1 = top_two_ranks_from_mask(oesd1_mask)
+    sdbl_ranks_nut = top_two_ranks_from_mask(nut_mask)
+    # print("SDBL ranks from OESD1:", sdbl_ranks_oesd1)
+    # print("SDBL ranks from Nut Straight:", sdbl_ranks_nut)
+    sdbl_ranks = np.unique(
+        np.concatenate(
+            [
+                (
+                    sdbl_ranks_oesd1
+                    if sdbl_ranks_oesd1.size
+                    else np.empty(0, dtype=np.int16)
+                ),
+                sdbl_ranks_nut if sdbl_ranks_nut.size else np.empty(0, dtype=np.int16),
+            ]
+        )
+    )
+    # Pretty-print sdbl_ranks without brackets; map 10-14 to T,J,Q,K,A
+    _rank_lookup = {10: "T", 11: "J", 12: "Q", 13: "K", 14: "A"}
+    # sdbl_pretty = " ".join(
+    #     _rank_lookup.get(int(v), str(int(v))) for v in sdbl_ranks.tolist()
+    # )
+    sdbl_pretty = list(
+        _rank_lookup.get(int(v), str(int(v))) for v in sdbl_ranks.tolist()
+    )
+    print(sdbl_pretty)
+    # # Rank-based features
+    # rank_chars = ["2", "3", "4", "5", "6", "7", "8", "9", "T", "J", "Q", "K", "A"]
+    rank_chars_single = [
+        "2",
+        "3",
+        "4",
+        "5",
+        "6",
+        "7",
+        "8",
+        "9",
+        "T",
+        "J",
+        "Q",
+        "K",
+        "A",
+    ]
+    rank_chars_double = [
+        "22",
+        "33",
+        "44",
+        "55",
+        "66",
+        "77",
+        "88",
+        "99",
+        "TT",
+        "JJ",
+        "QQ",
+        "KK",
+        "AA",
+    ]
+
+    print("Board ranks:", [str(i) for i in list(set(board.ranks))])
+    # # print("SDBL ranks:", sdbl_pretty)
+    # rank_chars = [
+    #     rc
+    #     for rc in set(sdbl_pretty)
+    #     if rc not in [str(i) for i in [str(i) for i in board.ranks]]
+    # ]
+    # print(rank_chars)
+    rank_chars_single = sdbl_pretty
+    rank_chars_double = [rc * 2 for rc in sdbl_pretty]
     cols_single: Dict[str, np.ndarray] = {}
     cols_double: Dict[str, np.ndarray] = {}
-    for offset, rc in enumerate(rank_chars, start=2):
+    for offset, rc in enumerate(rank_chars_single, start=2):
         cols_single[rc] = (counts_by_rank[:, offset] == 1).astype(np.int8)
-        cols_double[rc * 2] = (counts_by_rank[:, offset] >= 2).astype(np.int8)
+    for offset, rc in enumerate(rank_chars_double, start=2):
+        cols_double[rc] = (counts_by_rank[:, offset] >= 2).astype(np.int8)
 
     df_single = pd.DataFrame(cols_single, index=list(row_keys))
     df_double = pd.DataFrame(cols_double, index=list(row_keys))
@@ -186,7 +276,7 @@ def extract_features(
     feature_table = pd.concat([features_df, rank_df], axis=1)
 
     print(f"Feature computation took {time2 - time1:.6f} seconds")
-
+    # print("Extracted features:", feature_table.sample(n=25))
     return feature_table, actions_df
 
 
@@ -196,8 +286,12 @@ if __name__ == "__main__":
 
     # Get and extract features for the nth row
     n = 1
-    board_and_data = db.get_poki_nth_board_and_data(n)
-    feature_table, actions_df = extract_features(board_and_data)
 
-    print(feature_table)
-    print(actions_df)
+    board, data, stack, pos, pot, line = db.get_poki_nth_board_and_data(300)
+
+    feature_table, actions_df = extract_features(board, data)
+    print(board)
+    print(feature_table.columns.tolist())
+
+    print(feature_table.sample(n=25))
+    # print(actions_df)

@@ -274,15 +274,44 @@ def get_overall_action_ratios(actions: pd.DataFrame) -> Dict[str, float]:
     return overall_action_ratios
 
 
+prior = {"Full": ["Full", "Flush", "Straight", "Trips"]}
+
+
 def get_best_single_feature(
     features: pd.DataFrame,
     actions: pd.DataFrame,
     *,
+    first=0,
     loss_metric: LossMetric = "l2",
     prediction_mode: PredictionMode = "leaf_average",
     normalize_action_rows: bool = True,
     feature_names: Sequence[str] | None = None,
 ) -> FeatureScore:
+    if "Full" in features.columns:
+        for f in ["Full", "Flush", "Straight", "Trips"]:
+            if f in features.columns:
+                features = features[[f]]
+                break
+    elif "Flush" in features.columns:
+        for f in ["Flush", "Flushblocker"]:
+            if f in features.columns:
+                features = features[[f]]
+                break
+    elif "Straight" in features.columns:
+        for f in ["Straight", "Trips"]:
+            if f in features.columns:
+                features = features[[f]]
+                break
+    elif "Flushdraw" in features.columns:
+        for f in ["Trips", "Top Two Pair", "Wrap", "Flushdraw", "Flushblocker"]:
+            if f in features.columns:
+                features = features[[f]]
+                break
+    else:
+        for f in ["Trips", "Top Two Pair", "Wrap"]:
+            if f in features.columns:
+                features = features[[f]]
+                break
 
     aligned_features, aligned_actions = _validate_inputs(features, actions)
     columns = (
@@ -308,7 +337,8 @@ def get_best_single_feature(
     # --- Build boolean feature matrix (N, M) ---
     F = aligned_features[columns].fillna(0).to_numpy(dtype=np.float64)
     F = (F != 0).astype(np.float64)
-
+    if first == 1:
+        print(F.shape, A.shape, w.shape)
     # --- Vectorised weighted-sum-of-squares split search ---
     wA = A * w[:, None]  # (N, K)
     wA2 = (A**2) * w[:, None]  # (N, K)

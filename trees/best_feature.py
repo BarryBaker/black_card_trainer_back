@@ -274,44 +274,83 @@ def get_overall_action_ratios(actions: pd.DataFrame) -> Dict[str, float]:
     return overall_action_ratios
 
 
-prior = {"Full": ["Full", "Flush", "Straight", "Trips"]}
-
-
 def get_best_single_feature(
     features: pd.DataFrame,
     actions: pd.DataFrame,
     *,
-    first=0,
+    all_feature_names: Sequence[str] | None = None,
+    level: int | None = None,
     loss_metric: LossMetric = "l2",
     prediction_mode: PredictionMode = "leaf_average",
     normalize_action_rows: bool = True,
     feature_names: Sequence[str] | None = None,
 ) -> FeatureScore:
-    if "Full" in features.columns:
+    if "Full" in all_feature_names and level == 0:
         for f in ["Full", "Flush", "Straight", "Trips"]:
             if f in features.columns:
                 features = features[[f]]
                 break
-    elif "Flush" in features.columns:
-        for f in ["Flush", "Flushblocker"]:
+    elif "Flush" in all_feature_names and level == 0:
+        for f in ["Flush", "Flushblocker", "Straight", "Trips"]:
             if f in features.columns:
                 features = features[[f]]
                 break
-    elif "Straight" in features.columns:
+    elif "Straight" in all_feature_names and level == 0:
         for f in ["Straight", "Trips"]:
             if f in features.columns:
                 features = features[[f]]
                 break
-    elif "Flushdraw" in features.columns:
+    elif "Flushdraw" in all_feature_names and level == 0:
         for f in ["Trips", "Top Two Pair", "Wrap", "Flushdraw", "Flushblocker"]:
             if f in features.columns:
                 features = features[[f]]
                 break
-    else:
+    elif level == 0:
         for f in ["Trips", "Top Two Pair", "Wrap"]:
             if f in features.columns:
                 features = features[[f]]
                 break
+
+    # Exclude columns named as string representations of numbers like '2', '3', ..., '22', '33', etc.
+    import re
+
+    features_no_ranks = features[
+        [
+            col
+            for col in features.columns
+            if not col
+            in [
+                "2",
+                "3",
+                "4",
+                "5",
+                "6",
+                "7",
+                "8",
+                "9",
+                "T",
+                "J",
+                "Q",
+                "K",
+                "A",
+                "22",
+                "33",
+                "44",
+                "55",
+                "66",
+                "77",
+                "88",
+                "99",
+                "TT",
+                "JJ",
+                "QQ",
+                "KK",
+                "AA",
+            ]
+        ]
+    ]
+    if not features_no_ranks.empty:
+        features = features_no_ranks
 
     aligned_features, aligned_actions = _validate_inputs(features, actions)
     columns = (
@@ -337,8 +376,8 @@ def get_best_single_feature(
     # --- Build boolean feature matrix (N, M) ---
     F = aligned_features[columns].fillna(0).to_numpy(dtype=np.float64)
     F = (F != 0).astype(np.float64)
-    if first == 1:
-        print(F.shape, A.shape, w.shape)
+    # if first == 1:
+    #     print(F.shape, A.shape, w.shape)
     # --- Vectorised weighted-sum-of-squares split search ---
     wA = A * w[:, None]  # (N, K)
     wA2 = (A**2) * w[:, None]  # (N, K)

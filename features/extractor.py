@@ -25,6 +25,7 @@ from features.feature_ops import (
     feature_flush_blocker,
     feature_double_flush_draw,
     feature_rr,
+    feature_rr_high_low,
     feature_drr,
     feature_straight_draw,
     straight_helper,
@@ -111,7 +112,7 @@ def extract_features(
     fdraw_mask_ord = feature_flush_draw_strength(ranks, suits, board)
     feats["Flushdraw"] = (fdraw_mask_ord > 0).astype(np.int8)
     feats["Nut Flushdraw"] = (fdraw_mask_ord == 1).astype(np.int8)
-    feats["Nut Flushdraw"] = (fdraw_mask_ord == 2).astype(np.int8)
+    feats["2nd Nut Flushdraw"] = (fdraw_mask_ord == 2).astype(np.int8)
     bdfd, double_bdfd = feature_backdoor_flushdraw(suits, board)
     feats["Backdoor FD"] = bdfd
     feats["D Backdoor FD"] = double_bdfd
@@ -121,6 +122,9 @@ def extract_features(
     feats["Nut Flushblocker"] = blk1
     feats["High Flushblocker"] = blkh
     feats["Pocket Pair"] = feature_rr(counts_by_rank, board)
+    high_rr, low_rr = feature_rr_high_low(counts_by_rank, board)
+    feats["High Pocket"] = high_rr
+    feats["Low Pocket"] = low_rr
     feats["D Pocket"] = feature_drr(counts_by_rank, board)
 
     # Double flush draw (turn only)
@@ -136,8 +140,7 @@ def extract_features(
     outs_count, draw_made_high = feature_straight_draw(
         counts_by_rank, board_ranks, made_high, hand_sum_used
     )
-    print("Outs count:", made_high)
-    print("Draw made high card:", hand_sum_used)
+
     # Straight draw feature definitions
     feats["Gutshot"] = (outs_count == 1).astype(np.int8)
     feats["Nut Gutshot"] = ((outs_count == 1) & (draw_made_high == 1)).astype(np.int8)
@@ -169,8 +172,7 @@ def extract_features(
     nut_mask = feats["Nut Straight"].astype(bool)
     sdbl_ranks_oesd1 = top_two_ranks_from_mask(oesd1_mask)
     sdbl_ranks_nut = top_two_ranks_from_mask(nut_mask)
-    # print("SDBL ranks from OESD1:", sdbl_ranks_oesd1)
-    # print("SDBL ranks from Nut Straight:", sdbl_ranks_nut)
+
     sdbl_ranks = np.unique(
         np.concatenate(
             [
@@ -183,6 +185,7 @@ def extract_features(
             ]
         )
     )
+
     # Pretty-print sdbl_ranks without brackets; map 10-14 to T,J,Q,K,A
     _rank_lookup = {10: "T", 11: "J", 12: "Q", 13: "K", 14: "A"}
     # sdbl_pretty = " ".join(
@@ -191,7 +194,21 @@ def extract_features(
     sdbl_pretty = list(
         _rank_lookup.get(int(v), str(int(v))) for v in sdbl_ranks.tolist()
     )
-    print(sdbl_pretty)
+
+    for i in range(len(sdbl_ranks)):
+
+        feats[f" {sdbl_pretty[i]} "] = (
+            # (np.isin(ranks, sdbl_ranks[i])).any(axis=1).astype(np.int8)
+            (counts_by_rank[:, sdbl_ranks[i]] == 1).astype(np.int8)
+        )
+    for i in range(len(sdbl_ranks)):
+
+        feats[f" {sdbl_pretty[i]}{sdbl_pretty[i]} "] = (
+            #     np.sum(ranks == sdbl_ranks[i], axis=1) >= 2
+            # ).astype(np.int8)
+            (counts_by_rank[:, sdbl_ranks[i]] >= 2).astype(np.int8)
+        )
+
     # # Rank-based features
     # rank_chars = ["2", "3", "4", "5", "6", "7", "8", "9", "T", "J", "Q", "K", "A"]
     rank_chars_single = [
@@ -225,7 +242,7 @@ def extract_features(
         "AA",
     ]
 
-    print("Board ranks:", [str(i) for i in list(set(board.ranks))])
+    # print("Board ranks:", [str(i) for i in list(set(board.ranks))])
     # # print("SDBL ranks:", sdbl_pretty)
     # rank_chars = [
     #     rc
@@ -233,8 +250,7 @@ def extract_features(
     #     if rc not in [str(i) for i in [str(i) for i in board.ranks]]
     # ]
     # print(rank_chars)
-    rank_chars_single = sdbl_pretty
-    rank_chars_double = [rc * 2 for rc in sdbl_pretty]
+
     cols_single: Dict[str, np.ndarray] = {}
     cols_double: Dict[str, np.ndarray] = {}
     for offset, rc in enumerate(rank_chars_single, start=2):
@@ -274,9 +290,10 @@ def extract_features(
 
     # Combine all dataframes
     feature_table = pd.concat([features_df, rank_df], axis=1)
-
+    # feature_table = features_df  # Only use the main features for now
     print(f"Feature computation took {time2 - time1:.6f} seconds")
     # print("Extracted features:", feature_table.sample(n=25))
+    # return feature_table, actions_df
     return feature_table, actions_df
 
 

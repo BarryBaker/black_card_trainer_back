@@ -80,3 +80,36 @@ class PokiDatabase:
             raise TypeError(f"Unsupported data column type: {type(data).__name__}")
 
         return board, data, stack, pos, pot, line
+
+    def get_poki_records_by_board(self, board):
+        query = "select board, data, stack, pos, pot, line, hero from public.poki where board = %s"
+
+        with self.get_connection() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(query, (board,))
+                rows = cur.fetchall()
+
+        records = []
+        for row in rows:
+            row_board = row.get("board")
+            data = row.get("data")
+            stack = row.get("stack")
+            pos = row.get("pos")
+            pot = row.get("pot")
+            line = row.get("line")
+
+            hero = row.get("hero")
+
+            if isinstance(data, dict):
+                pass
+            elif isinstance(data, (bytes, bytearray)):
+                data = data.decode("utf-8")
+                data = json.loads(data)
+            elif isinstance(data, str):
+                data = json.loads(data)
+            else:
+                raise TypeError(f"Unsupported data column type: {type(data).__name__}")
+
+            records.append((row_board, data, stack, pos, pot, line, hero))
+
+        return records

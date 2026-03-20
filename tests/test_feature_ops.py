@@ -31,6 +31,7 @@ from features.feature_ops import (
     feature_full_house,
     feature_quads,
     feature_rr,
+    feature_rr_high_low,
     feature_straight_draw,
     feature_trips,
     feature_two_pair,
@@ -516,6 +517,29 @@ def test_flush_strength_and_features():
     assert dmask.tolist() == [1, 2, 3, 0]
 
 
+def test_flush_draw_strength_second_nut_and_multisuit_regression():
+    # Single draw suit: second nut must remain category 2 (never 1)
+    board = Board("AsQs9d2c")
+    hands = {
+        "Js8sKhJh": {},  # spades J-high, with K available as nut -> second nut (2)
+        "Ks8sKhJh": {},  # spades K-high -> nut (1)
+        "Ts8sKhJh": {},  # spades T-high -> other draw (3)
+    }
+    ranks, suits = encode_hands(hands)
+    dmask = feature_flush_draw_strength(ranks, suits, board)
+    assert dmask.tolist() == [2, 1, 3]
+
+    # Two draw suits on turn (2-2 board split): keep best category across suits.
+    # Regression: do not downgrade from 1 to 2 when a later suit is second nut.
+    board = Board("As7s5d")  # clubs=2, spades=2
+    hands = {
+        "KsQsTc2c": {},  # clubs K-high draw (1), spades Q-high draw (2) → overall 1 (best)
+    }
+    ranks, suits = encode_hands(hands)
+    dmask = feature_flush_draw_strength(ranks, suits, board)
+    assert dmask.tolist() == [1]
+
+
 def test_flush_blocker_features():
     # Board with three spades (flush present) and also valid for blocker (>=2)
     board = Board("AsTs3s2c")
@@ -643,6 +667,45 @@ def test_rr_feature():
     counts = compute_counts_by_rank(ranks)
     rr = feature_rr(counts, board)
     assert rr.tolist() == [0, 0, 1, 1]
+
+
+def test_rr_high_low_feature():
+    # Board: AsKd7h -> highest=A(14)
+    # rr-eligible ranks below A and not on board: 2,3,4,5,6,8,9,T,J,Q
+    # Split ascending with odd-middle-to-high rule:
+    #   low: 2,3,4,5,6
+    #   high: 8,9,T,J,Q
+    board = Board("AsKd7h")
+    hands = {
+        "QhQsJhJd": {},  # high_rr
+        "6h6s2d3c": {},  # low_rr
+        "8h8s4d4c": {},  # both
+        "AhAdKhKd": {},  # none (board ranks)
+    }
+    ranks, _ = encode_hands(hands)
+    counts = compute_counts_by_rank(ranks)
+
+    high_rr, low_rr = feature_rr_high_low(counts, board)
+    assert high_rr.tolist() == [1, 0, 1, 0]
+    assert low_rr.tolist() == [0, 1, 1, 0]
+
+    # Even-count split example
+    # Board: TsTd7h -> highest=T(10)
+    # rr-eligible: 2,3,4,5,6,8,9
+    # low: 2,3,4
+    # high: 5,6,8,9
+    board = Board("TsTd7h")
+    hands = {
+        "9h9s2d3c": {},  # high only
+        "4h4sAhKc": {},  # low only
+        "6h6s3d3c": {},  # both
+    }
+    ranks, _ = encode_hands(hands)
+    counts = compute_counts_by_rank(ranks)
+
+    high_rr, low_rr = feature_rr_high_low(counts, board)
+    assert high_rr.tolist() == [1, 0, 1]
+    assert low_rr.tolist() == [0, 1, 1]
 
 
 def test_straight_feature_flags_from_helper():

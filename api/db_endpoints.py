@@ -46,6 +46,49 @@ def get_street_filter_condition(street):
         raise ValueError(f"Invalid street value: {street}. Must be 'flop' or 'turn'")
 
 
+FLOP_BOARD_FILTER_COLUMNS = (
+    ("flopSuited", "is_flopsuited"),
+    ("flopPaired", "is_floppaired"),
+    ("flopStraight", "is_flopstr8"),
+    ("flopFlush", "is_flopflush"),
+)
+
+TURN_BOARD_FILTER_COLUMNS = (
+    ("turnSuited", "is_suited"),
+    ("turnPaired", "is_paired"),
+    ("turnStraight", "is_str8"),
+    ("turnFlush", "is_flush"),
+)
+
+
+def get_board_filter_columns(street):
+    street_lower = street.lower() if isinstance(street, str) else str(street).lower()
+    if street_lower == "flop":
+        return FLOP_BOARD_FILTER_COLUMNS
+    if street_lower == "turn":
+        return FLOP_BOARD_FILTER_COLUMNS + TURN_BOARD_FILTER_COLUMNS
+    raise ValueError(f"Invalid street value: {street}. Must be 'flop' or 'turn'")
+
+
+def get_board_filter_clauses(street, board_filters):
+    if not isinstance(board_filters, dict):
+        raise ValueError("Field 'board' must be an object")
+
+    clauses = []
+    params = []
+    for payload_key, column_name in get_board_filter_columns(street):
+        filter_value = board_filters.get(payload_key)
+        if filter_value is None:
+            continue
+        if not isinstance(filter_value, bool):
+            raise ValueError(f"Board field '{payload_key}' must be boolean or null")
+
+        clauses.append(sql.SQL("and {} = %s").format(sql.Identifier(column_name)))
+        params.append(filter_value)
+
+    return clauses, params
+
+
 def normalize_json_value(value):
     if isinstance(value, Decimal):
         return float(value)
@@ -136,7 +179,7 @@ def get_unique_lines_for_filters():
 
     payload = request.get_json(silent=True) or {}
 
-    required_fields = ("stack", "pos", "pot", "hero", "street")
+    required_fields = ("stack", "pos", "pot", "hero", "street", "board")
     missing_fields = get_required_payload_fields(payload, required_fields)
 
     if missing_fields:
@@ -151,24 +194,34 @@ def get_unique_lines_for_filters():
             ),
             400,
         )
-
+    print("Received lines request with payload:", payload)
     database = get_database()
 
     try:
         street_column, street_value = get_street_filter_condition(payload["street"])
+        board_filter_clauses, board_filter_params = get_board_filter_clauses(
+            payload["street"], payload["board"]
+        )
 
         with database.get_connection() as connection:
             with connection.cursor() as cursor:
                 query = sql.SQL(
-                    "select distinct line from public.poki where stack = %s and pos = %s and pot = %s and hero = %s and {} = %s and line is not null order by line"
-                ).format(sql.Identifier(street_column))
+                    "select distinct line from public.poki where stack = %s and pos = %s and pot = %s and hero = %s and {} = %s {board_filters} and line is not null order by line"
+                ).format(
+                    sql.Identifier(street_column),
+                    board_filters=(
+                        sql.SQL("\n                      ").join(board_filter_clauses)
+                        if board_filter_clauses
+                        else sql.SQL("")
+                    ),
+                )
                 params = [
                     payload["stack"],
                     payload["pos"],
                     payload["pot"],
                     payload["hero"],
                     street_value,
-                ]
+                ] + board_filter_params
 
                 cursor.execute(query, params)
                 line_values = [row[0] for row in cursor.fetchall()]
@@ -195,7 +248,8 @@ def get_unique_lines_for_filters():
 @db_blueprint.post("/train")
 def get_weighted_training_record():
     payload = request.get_json(silent=True) or {}
-    required_fields = ("stack", "pos", "pot", "hero", "line", "street")
+    required_fields = ("stack", "pos", "pot", "hero", "line", "street", "board")
+
     missing_fields = get_required_payload_fields(payload, required_fields)
     if missing_fields:
         return (
@@ -225,6 +279,9 @@ def get_weighted_training_record():
 
     try:
         street_column, street_value = get_street_filter_condition(payload["street"])
+        board_filter_clauses, board_filter_params = get_board_filter_clauses(
+            payload["street"], payload["board"]
+        )
 
         with database.get_connection() as connection:
             with connection.cursor(cursor_factory=RealDictCursor) as cursor:
@@ -236,14 +293,22 @@ def get_weighted_training_record():
                       and pos = %s
                       and pot = %s
                       and hero = %s
-                      and {} = %s
+                      and {street_column} = %s
                       and line = any(%s)
+                      {board_filters}
                       and total_weight is not null
                       and total_weight > 0
                     order by -ln(random()) / total_weight
                     limit 1
                     """
-                ).format(sql.Identifier(street_column))
+                ).format(
+                    street_column=sql.Identifier(street_column),
+                    board_filters=(
+                        sql.SQL("\n                      ").join(board_filter_clauses)
+                        if board_filter_clauses
+                        else sql.SQL("")
+                    ),
+                )
                 params = [
                     payload["stack"],
                     payload["pos"],
@@ -251,10 +316,20 @@ def get_weighted_training_record():
                     payload["hero"],
                     street_value,
                     requested_lines,
-                ]
+                ] + board_filter_params
 
                 cursor.execute(query, params)
                 record = cursor.fetchone()
+    except ValueError as exc:
+        return (
+            jsonify(
+                {
+                    "status": "error",
+                    "message": str(exc),
+                }
+            ),
+            400,
+        )
     except Exception as exc:
         current_app.logger.exception("Fetching weighted training record failed")
         return (
@@ -338,7 +413,7 @@ def get_tree():
 
     total_mass = actions.shape[0]
 
-    def split(features, actions, depth=0):
+    def split(features, actions, all_feature_names=[], level=None):
 
         features = features.loc[:, (features.nunique() > 1)]
         mass = features.shape[0] / total_mass
@@ -362,9 +437,11 @@ def get_tree():
             best_score,
             true_ratios_str,
             false_ratios_str,
-        ) = get_best_single_feature(features, actions)
+        ) = get_best_single_feature(
+            features, actions, all_feature_names=all_feature_names, level=level
+        )
         mass = features.shape[0] / total_mass
-
+        # print("splitben", best_score.feature_name)
         best_overall_action = max(overall_action_ratios, key=overall_action_ratios.get)
         best_true_action = max(true_ratios_str, key=true_ratios_str.get)
         best_false_action = max(false_ratios_str, key=false_ratios_str.get)
@@ -375,7 +452,7 @@ def get_tree():
             or best_overall_action != best_false_action
         )
 
-        if mass < 0.05 and not actions_split:
+        if mass < 0.025 and not actions_split:
             try:
                 taskhandhasit = features.loc[payload["taskhand"], :]
 
@@ -420,12 +497,10 @@ def get_tree():
             "best_feature": best_score.feature_name,
             "split": actions_split,
             "true": split(
-                features_true,
-                actions_true,
+                features_true, actions_true, all_feature_names, level=level + 1
             ),
             "false": split(
-                features_false,
-                actions_false,
+                features_false, actions_false, all_feature_names, level=level
             ),
             "cards": actions,
             "taskhand": taskhandhasit is not None,
@@ -447,7 +522,9 @@ def get_tree():
             )
         return True
 
-    tree = split(features, actions)
+    all_feature_names = features.loc[:, (features.nunique() > 1)].columns.tolist()
+
+    tree = split(features, actions, all_feature_names, 0)
 
     overall_actions = tree["actions"]
 
@@ -461,7 +538,9 @@ def get_tree():
             {
                 "action": subTree["true"]["actions"],
                 "cards": (
-                    (subTree["true"]["cards"].index.tolist()) if not true_splits else []
+                    (subTree["true"]["cards"].to_dict(orient="index"))
+                    if not true_splits
+                    else {}
                 ),
                 "taskhand": subTree["true"]["taskhand"] if not true_splits else "",
                 "best_feature": subTree["best_feature"],
@@ -479,7 +558,7 @@ def get_tree():
             subresult.append(
                 {
                     "action": subTree["false"]["actions"],
-                    "cards": (subTree["false"]["cards"].index.tolist()),
+                    "cards": (subTree["false"]["cards"].to_dict(orient="index")),
                     "taskhand": subTree["false"]["taskhand"],
                     "best_feature": "",
                     "mass": subTree["false"]["mass"],

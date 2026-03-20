@@ -179,6 +179,63 @@ def feature_rr(counts_by_rank: np.ndarray, board: Board) -> np.ndarray:
     return rr_mask
 
 
+def _rr_allowed_rank_values(board: Board) -> np.ndarray:
+    """
+    Return rank values (2..14) that qualify for rr on this board:
+      - strictly lower than board highest rank
+      - not present on board
+    """
+    highest_board = int(board.highest_rank) if board.highest_rank else 0
+    if highest_board <= 0:
+        return np.empty(0, dtype=np.int16)
+
+    rank_values = np.arange(2, 15, dtype=np.int16)
+    present_on_board = board.rank_counts[2:15] > 0
+    lower_than_high = rank_values < highest_board
+    allowed_mask = (~present_on_board) & lower_than_high
+    return rank_values[allowed_mask]
+
+
+def feature_rr_high_low(
+    counts_by_rank: np.ndarray, board: Board
+) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Split rr-eligible ranks into high and low buckets by rank value.
+
+    Steps:
+      - Build rr-eligible ranks: below highest board rank and not on board.
+      - Sort ascending and split equally into two groups.
+      - If odd count, the middle rank is assigned to high_rr.
+
+    Returns:
+      - high_rr: (N,) int8 mask, has a pocket pair of any high-group rank
+      - low_rr: (N,) int8 mask, has a pocket pair of any low-group rank
+    """
+    n = counts_by_rank.shape[0]
+    allowed_ranks = _rr_allowed_rank_values(board)
+    if allowed_ranks.size == 0:
+        z = np.zeros(n, dtype=np.int8)
+        return z, z
+
+    # Ascending by value; high gets the larger half, including middle if odd.
+    allowed_sorted = np.sort(allowed_ranks)
+    split_idx = allowed_sorted.size // 2
+    low_group = allowed_sorted[:split_idx]
+    high_group = allowed_sorted[split_idx:]
+
+    high_rr = (
+        (counts_by_rank[:, high_group] >= 2).any(axis=1).astype(np.int8)
+        if high_group.size
+        else np.zeros(n, dtype=np.int8)
+    )
+    low_rr = (
+        (counts_by_rank[:, low_group] >= 2).any(axis=1).astype(np.int8)
+        if low_group.size
+        else np.zeros(n, dtype=np.int8)
+    )
+    return high_rr, low_rr
+
+
 def feature_drr(counts_by_rank: np.ndarray, board: Board) -> np.ndarray:
     """
     drr (double rr): player has TWO pocket pairs (>=2 of same rank in hand) of ranks that:
@@ -635,10 +692,20 @@ def feature_flush_draw_strength(
 
         is_best = eligible & (hand_top == highest_avail)
         is_second = eligible & (second_avail > 0) & (hand_top == second_avail)
-        result = np.where(is_best, 1, result)
-        result = np.where(~is_best & is_second, 2, result)
         other = eligible & ~(is_best | is_second)
-        result = np.where(other & (result == 0), 3, result)
+
+        suit_result = np.zeros(n, dtype=np.int8)
+        suit_result = np.where(is_best, 1, suit_result)
+        suit_result = np.where(~is_best & is_second, 2, suit_result)
+        suit_result = np.where(other, 3, suit_result)
+
+        # If multiple draw suits exist (e.g., 2-2 turn board), keep the strongest
+        # category per hand: 1 (best) < 2 < 3, while 0 means no draw for that suit.
+        result = np.where(
+            result == 0,
+            suit_result,
+            np.where(suit_result == 0, result, np.minimum(result, suit_result)),
+        )
 
     return result.astype(np.int8)
 

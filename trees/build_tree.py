@@ -35,7 +35,7 @@ result = []
 # the_tree = {}
 
 
-def split(features, actions, depth=0):
+def split(features, actions, first_level=0):
 
     features = features.loc[:, (features.nunique() > 1)]
     mass = features.shape[0] / total_mass
@@ -62,9 +62,9 @@ def split(features, actions, depth=0):
         best_score,
         true_ratios_str,
         false_ratios_str,
-    ) = get_best_single_feature(features, actions, first=depth)
+    ) = get_best_single_feature(features, actions, first=first_level)
     mass = features.shape[0] / total_mass
-
+    # print("splitben", best_score.feature_name)
     best_overall_action = max(overall_action_ratios, key=overall_action_ratios.get)
     best_true_action = max(true_ratios_str, key=true_ratios_str.get)
     best_false_action = max(false_ratios_str, key=false_ratios_str.get)
@@ -75,7 +75,7 @@ def split(features, actions, depth=0):
         or best_overall_action != best_false_action
     )
 
-    if mass < 0.05 and not actions_split:
+    if mass < 0.02 and not actions_split:
         # print("Mass below threshold, stopping split.")
 
         try:
@@ -152,10 +152,7 @@ def split(features, actions, depth=0):
             features_true,
             actions_true,
         ),
-        "false": split(
-            features_false,
-            actions_false,
-        ),
+        "false": split(features_false, actions_false, first_level=first_level),
         "cards": actions,
         "taskhand": taskhandhasit is not None,
     }
@@ -313,7 +310,6 @@ def main():
     global total_mass
 
     db = PokiDatabase()
-    time1 = time.time()
     board, data, stack, pos, pot, line = db.get_poki_nth_board_and_data(70199)
 
     print()
@@ -329,6 +325,7 @@ def main():
         "| Line",
         line,
     )
+    time1 = time.time()
 
     features, actions = extract_features(board, data)
 

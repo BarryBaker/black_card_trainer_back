@@ -131,7 +131,7 @@ def extract_features(
     feats["D Flushdraw"] = feature_double_flush_draw(suits, board)
 
     # Precompute straight helper once; reuse for straight, nut_straight, and draws
-    (made_high, hand_sum_used) = straight_helper(counts_by_rank, board_ranks)
+    made_high, hand_sum_used = straight_helper(counts_by_rank, board_ranks)
     # feats["straight_made_high"] = made_high
     # feats["straight_hand_sum_used"] = hand_sum_used
     feats["Straight"] = (made_high >= 1).astype(np.int8)

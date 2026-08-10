@@ -402,10 +402,20 @@ def get_tree():
             400,
         )
 
-    db = PokiDatabase()
+    db = get_database()
+    board, data, stack, pos, pot, line = db.get_poki_board_and_data_by_id(payload["id"])
+    if board is None:
+        return (
+            jsonify(
+                {
+                    "status": "error",
+                    "message": "No record found for the requested id",
+                    "id": payload["id"],
+                }
+            ),
+            404,
+        )
 
-    db = PokiDatabase()
-    board, data, stack, pos, pot, line = db.get_poki_nth_board_and_data(payload["id"])
     features, actions = extract_features(board, data)
     # scores = rank_single_features(features, actions)
     # for i in scores[:4]:

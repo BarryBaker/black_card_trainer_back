@@ -1,5 +1,6 @@
 import os
 import json
+from urllib.parse import unquote, urlparse
 
 import psycopg2
 from psycopg2 import sql
@@ -8,11 +9,22 @@ from psycopg2.extras import RealDictCursor
 
 class PokiDatabase:
     def __init__(self):
-        self.host = os.getenv("DB_HOST", "localhost")
-        self.port = int(os.getenv("DB_PORT", "5432"))
-        self.dbname = os.getenv("DB_NAME", "poki_demo")
-        self.user = os.getenv("DB_USER", "barry")
-        self.password = os.getenv("DB_PASSWORD", "password")
+        # Railway (and most hosts) provide a single DATABASE_URL; fall back to
+        # the individual DB_* vars for local runs.
+        database_url = os.getenv("DATABASE_URL")
+        if database_url:
+            parsed = urlparse(database_url)
+            self.host = parsed.hostname
+            self.port = parsed.port or 5432
+            self.dbname = (parsed.path or "").lstrip("/") or "poki_demo"
+            self.user = unquote(parsed.username or "")
+            self.password = unquote(parsed.password or "")
+        else:
+            self.host = os.getenv("DB_HOST", "localhost")
+            self.port = int(os.getenv("DB_PORT", "5432"))
+            self.dbname = os.getenv("DB_NAME", "poki_demo")
+            self.user = os.getenv("DB_USER", "barry")
+            self.password = os.getenv("DB_PASSWORD", "password")
 
     def get_connection(self):
         return psycopg2.connect(

@@ -365,7 +365,7 @@ def get_weighted_training_record():
             ),
             404,
         )
-    print("Selected task:", normalize_json_value(task))
+
     return jsonify(
         {
             "id": record["id"],

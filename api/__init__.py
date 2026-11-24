@@ -6,7 +6,6 @@ from flask import Flask, jsonify, request
 
 from api.db_endpoints import db_blueprint
 
-
 DEFAULT_CORS_ORIGINS = (
     "http://localhost:3000",
     "http://127.0.0.1:3000",
@@ -18,6 +17,8 @@ DEFAULT_CORS_ORIGINS = (
     "http://127.0.0.1:4200",
     "http://localhost:5173",
     "http://127.0.0.1:5173",
+    "http://localhost:5174",
+    "http://127.0.0.1:5174",
     "http://localhost:8080",
     "http://127.0.0.1:8080",
 )

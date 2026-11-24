@@ -1,0 +1,22 @@
+name: blackcard-trainer
+
+services:
+  api:
+    build: .
+    restart: unless-stopped
+    # On the Linux VPS, both the database and Caddy use the host loopback.
+    network_mode: host
+    environment:
+      GUNICORN_CMD_ARGS: '--bind=127.0.0.1:8001'
+      DB_HOST: '127.0.0.1'
+      DB_PORT: '5433'
+      DB_NAME: blackcard_trainer
+      DB_USER: blackcard_reader
+      DB_PASSWORD: '${DB_PASSWORD:?Set DB_PASSWORD in .env}'
+      CORS_ALLOWED_ORIGINS: '${CORS_ALLOWED_ORIGINS:-}'
+    healthcheck:
+      test: ['CMD', 'python', '-c', "from urllib.request import urlopen; urlopen('http://127.0.0.1:8001/api/db/health', timeout=4).close()"]
+      start_period: 15s
+      interval: 30s
+      timeout: 5s
+      retries: 3

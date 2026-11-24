@@ -1,0 +1,12 @@
+.git/
+**/.DS_Store
+**/__pycache__/
+**/*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+.env
+.env.*
+tests/
+*.dump
+trees/board_dump.txt
